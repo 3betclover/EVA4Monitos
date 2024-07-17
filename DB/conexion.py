@@ -1,6 +1,6 @@
 import mysql.connector
 from mysql.connector import Error
-from datetime import datetime  # Importa datetime para trabajar con fechas y horas
+from datetime import datetime
 
 class DAO:
     def __init__(self):
@@ -30,12 +30,44 @@ class DAO:
             """
             cursor.execute(query, (fecha_abierto, id_jefe_de_ventas))
             self.conexion.commit()
-            print("Nuevo día de ventas abierto correctamente.")
+            return "Nuevo día de ventas abierto correctamente."
         except Exception as e:
-            print(f"Error al abrir día de ventas: {e}")
             self.conexion.rollback()
+            return f"Error al abrir día de ventas: {e}"
         finally:
             cursor.close()
+    
+    def cerrar_dia_de_ventas(self, id_jefe_de_ventas):
+        try:
+            cursor = self.conexion.cursor()
+            
+            # Verificar si hay un día de ventas abierto para cerrar
+            query_verificar = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
+            cursor.execute(query_verificar)
+            resultado = cursor.fetchone()
+            
+            if not resultado:
+                return "No hay un día de ventas abierto para cerrar."
+            
+            id_dia_de_ventas = resultado[0]
+            
+            # Actualizar el estado del día de ventas a 'cerrado', la fecha de cierre y el id del jefe de ventas
+            fecha_cerrado = datetime.now()
+            query_update = """
+            UPDATE dias_de_ventas SET estado = 'cerrado', fecha_cerrado = %s, id_jefe_de_ventas = %s WHERE id = %s
+            """
+            cursor.execute(query_update, (fecha_cerrado, id_jefe_de_ventas, id_dia_de_ventas))
+            self.conexion.commit()
+            
+            return "Día de ventas cerrado correctamente."
+        
+        except Exception as e:
+            self.conexion.rollback()
+            return f"Error al cerrar día de ventas: {e}"
+        finally:
+            cursor.close()
+
+
 
 
 

@@ -1,7 +1,9 @@
-import VISTA.funciones
-from VISTA.funciones import login # Importar login desde funciones.py
-# Llamar a mi_funcion definida en funciones.py
-VISTA.funciones.mi_funcion()
+import VISTA.funciones as funciones
+
+# Llamar a la función bienvenido definida en funciones.py
+funciones.bienvenido()
 
 if __name__ == "__main__":
-    login()
+    funciones.login()
+
+

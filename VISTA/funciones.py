@@ -26,8 +26,8 @@ def login():
                 usuario_id, rol = resultado
                 if rol == 'jefe de ventas':
                     print("Bienvenido, jefe de ventas.")
-                    submenu_jefe_ventas(conexion, usuario_id)
-                    break
+                    if not submenu_jefe_ventas(conexion, usuario_id):
+                        break
                 elif rol == 'vendedor':
                     print("Bienvenido, vendedor.")
                     generar_venta(usuario_id, conexion)
@@ -49,84 +49,57 @@ def submenu_jefe_ventas(conexion, id_jefe_de_ventas):
         print("1. Abrir día de ventas")
         print("2. Cerrar día de ventas")
         print("3. Agregar producto")
+        print("4. Ver día de ventas")
         print("0. Salir")
         
         opcion = input("Seleccione una opción: ")
         
         if opcion == '1':
-            abrir_dia_de_ventas(conexion)
+            mensaje = abrir_dia_de_ventas(conexion, id_jefe_de_ventas)
+            print(mensaje)
         elif opcion == '2':
-            cerrar_dia_de_ventas(conexion, id_jefe_de_ventas)
+            mensaje = cerrar_dia_de_ventas(conexion, id_jefe_de_ventas)
+            print(mensaje)
         elif opcion == '3':
             agregar_productos(conexion)
+        elif opcion == '4':
+            ver_dia_de_ventas(conexion)
         elif opcion == '0':
             print("Saliendo del menú de Jefe de Ventas.")
-            break
+            return True
         else:
             print("Opción no válida. Intente nuevamente.")
 
-def abrir_dia_de_ventas(conexion):
+def abrir_dia_de_ventas(conexion, id_jefe_de_ventas):
     try:
         cursor = conexion.cursor()
         
-        # Verificar si ya hay un día de ventas abierto
-        query_verificar = "SELECT id, fecha_abierto FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
-        cursor.execute(query_verificar)
+        # Verificar si ya hay un día de ventas activo
+        query = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
+        cursor.execute(query)
         resultado = cursor.fetchone()
         
         if resultado:
-            id_dia_abierto, fecha_abierto = resultado
-            print(f"Ya hay un día de ventas abierto desde {fecha_abierto.strftime('%d/%m/%Y %H:%M:%S')}. No se puede abrir otro día.")
-            return
+            return "Ya hay un día de ventas abierto. Debe cerrar el día de ventas actual antes de abrir uno nuevo."
         
-        # Si no hay un día abierto, procedemos a abrir uno nuevo
-        fecha_abierto = datetime.now()
-        query_insertar = """
-        INSERT INTO dias_de_ventas (fecha_abierto, estado)
-        VALUES (%s, 'abierto')
-        """
-        cursor.execute(query_insertar, (fecha_abierto,))
+        # Si no hay un día de ventas activo, abrir uno nuevo
+        query = "INSERT INTO dias_de_ventas (id_jefe_de_ventas, fecha_abierto, estado) VALUES (%s, %s, %s)"
+        cursor.execute(query, (id_jefe_de_ventas, datetime.now(), 'abierto'))
         conexion.commit()
-        print("Nuevo día de ventas abierto correctamente.")
+        
+        return "Día de ventas abierto exitosamente."
     
     except Exception as e:
-        print(f"Error al abrir día de ventas: {e}")
         conexion.rollback()
+        return f"Error al abrir el día de ventas: {e}"
     
     finally:
         cursor.close()
 
 def cerrar_dia_de_ventas(conexion, id_jefe_de_ventas):
-    try:
-        cursor = conexion.cursor()
-        
-        # Verificar si hay un día de ventas abierto para cerrar
-        query_verificar = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
-        cursor.execute(query_verificar)
-        resultado = cursor.fetchone()
-        
-        if not resultado:
-            print("No hay un día de ventas abierto para cerrar.")
-            return
-        
-        id_dia_de_ventas = resultado[0]
-        
-        # Actualizar el estado del día de ventas a 'cerrado', la fecha de cierre y el id del jefe de ventas
-        fecha_cerrado = datetime.now()
-        query_update = """
-        UPDATE dias_de_ventas SET estado = 'cerrado', fecha_cerrado = %s, id_jefe_de_ventas = %s WHERE id = %s
-        """
-        cursor.execute(query_update, (fecha_cerrado, id_jefe_de_ventas, id_dia_de_ventas))
-        conexion.commit()
-        
-        print("Día de ventas cerrado correctamente.")
-    
-    except Exception as e:
-        print(f"Error al cerrar día de ventas: {e}")
-        conexion.rollback()
-    
-    finally:
-        cursor.close()
+    dao = DAO()
+    mensaje = dao.cerrar_dia_de_ventas(id_jefe_de_ventas)
+    return mensaje
 
 def agregar_productos(conexion):
     while True:
@@ -226,10 +199,62 @@ def generar_venta(usuario_id, conexion):
     finally:
         cursor.close()
 
-def mi_funcion():
-    print("Esta es mi_funcion en VISTA.funciones")
+def ver_dia_de_ventas(conexion):
+    try:
+        cursor = conexion.cursor()
 
+        # Obtener el ID del día de ventas abierto
+        query = "SELECT id, fecha_abierto FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
+        cursor.execute(query)
+        resultado = cursor.fetchone()
 
+        if not resultado:
+            print("No hay un día de ventas abierto para generar un informe.")
+            return
+
+        id_dia_de_ventas, fecha_abierto = resultado
+        print(f"Informe del día de ventas abierto desde {fecha_abierto.strftime('%d/%m/%Y %H:%M:%S')}")
+
+        # Obtener la cantidad de ventas con boleta y el monto total de esas ventas
+        query_boletas = """
+        SELECT COUNT(*), SUM(precio_total)
+        FROM ventas
+        WHERE id_dia_de_ventas = %s AND tipo_documento = 'boleta'
+        """
+        cursor.execute(query_boletas, (id_dia_de_ventas,))
+        cantidad_boletas, total_boletas = cursor.fetchone()
+
+        print(f"Cantidad de ventas con boleta: {cantidad_boletas}")
+        print(f"Cantidad de dinero por ventas con boleta: {total_boletas}")
+
+        # Obtener el número de facturas generadas y el detalle de cada una
+        query_facturas = """
+        SELECT id, precio_total
+        FROM ventas
+        WHERE id_dia_de_ventas = %s AND tipo_documento = 'factura'
+        """
+        cursor.execute(query_facturas, (id_dia_de_ventas,))
+        facturas = cursor.fetchall()
+
+        print(f"Número de facturas generadas: {len(facturas)}")
+        for factura in facturas:
+            id_factura, precio_total = factura
+            iva = precio_total * 0.19
+            neto = precio_total - iva
+            print(f"Factura {id_factura}: Neto: {neto}, IVA: {iva}, Total: {precio_total}")
+
+    except Exception as e:
+        print(f"Error al generar el informe del día de ventas: {e}")
+    finally:
+        cursor.close()
+
+def bienvenido():
+    mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
+    ancho_total = len(mensaje) + 6  # 2 asteriscos + 2 espacios + 2 comillas
+
+    print("*" * ancho_total)
+    print(f"* {mensaje.center(ancho_total - 4)} *")
+    print("*" * ancho_total)
 
 
 
