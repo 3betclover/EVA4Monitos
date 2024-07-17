@@ -1,9 +1,10 @@
-import VISTA.funciones as funciones
+import VISTA.funciones
+from VISTA.funciones import login  
 
-# Llamar a la función bienvenido definida en funciones.py
-funciones.bienvenido()
+
+VISTA.funciones.bienvenido()
 
 if __name__ == "__main__":
-    funciones.login()
-
+    while True:  
+        login()
 

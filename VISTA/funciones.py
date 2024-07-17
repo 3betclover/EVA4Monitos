@@ -1,6 +1,15 @@
 from DB.conexion import DAO
 from datetime import datetime
 
+def bienvenido():
+    # Definir el mensaje
+    mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
+    ancho_total = len(mensaje) + 6  # 2 asteriscos + 2 espacios + 2 comillas
+
+    print("*" * ancho_total) 
+    print(f"* {mensaje.center(ancho_total - 4)} *")
+    print("*" * ancho_total)
+
 def login():
     dao = DAO()
     conexion = dao.conectar()
@@ -30,8 +39,8 @@ def login():
                         break
                 elif rol == 'vendedor':
                     print("Bienvenido, vendedor.")
-                    generar_venta(usuario_id, conexion)
-                    break
+                    if not menu_vendedor(usuario_id, conexion):
+                        break
                 else:
                     print("Rol no reconocido.")
             else:
@@ -74,32 +83,53 @@ def abrir_dia_de_ventas(conexion, id_jefe_de_ventas):
     try:
         cursor = conexion.cursor()
         
-        # Verificar si ya hay un día de ventas activo
-        query = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
+        # Verificar si ya hay un día de ventas abierto
+        query = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto'"
         cursor.execute(query)
         resultado = cursor.fetchone()
         
         if resultado:
-            return "Ya hay un día de ventas abierto. Debe cerrar el día de ventas actual antes de abrir uno nuevo."
+            return "Ya hay un día de ventas abierto. Cierre el día de ventas actual antes de abrir uno nuevo."
         
-        # Si no hay un día de ventas activo, abrir uno nuevo
+        # Abrir un nuevo día de ventas
         query = "INSERT INTO dias_de_ventas (id_jefe_de_ventas, fecha_abierto, estado) VALUES (%s, %s, %s)"
-        cursor.execute(query, (id_jefe_de_ventas, datetime.now(), 'abierto'))
+        fecha_abierto = datetime.now()
+        cursor.execute(query, (id_jefe_de_ventas, fecha_abierto, 'abierto'))
         conexion.commit()
         
         return "Día de ventas abierto exitosamente."
-    
     except Exception as e:
         conexion.rollback()
-        return f"Error al abrir el día de ventas: {e}"
-    
+        return f"Error al abrir día de ventas: {e}"
     finally:
         cursor.close()
 
 def cerrar_dia_de_ventas(conexion, id_jefe_de_ventas):
-    dao = DAO()
-    mensaje = dao.cerrar_dia_de_ventas(id_jefe_de_ventas)
-    return mensaje
+    try:
+        cursor = conexion.cursor()
+        
+        # Verificar si hay un día de ventas abierto
+        query = "SELECT id FROM dias_de_ventas WHERE estado = 'abierto'"
+        cursor.execute(query)
+        resultado = cursor.fetchone()
+        
+        if not resultado:
+            return "No hay un día de ventas abierto."
+        
+        id_dia_de_ventas = resultado[0]
+        
+        # Cerrar el día de ventas
+        query = "UPDATE dias_de_ventas SET fecha_cerrado = %s, estado = %s WHERE id = %s"
+        fecha_cerrado = datetime.now()
+        cursor.execute(query, (fecha_cerrado, 'cerrado', id_dia_de_ventas))
+        conexion.commit()
+        
+        return "Día de ventas cerrado exitosamente."
+    except Exception as e:
+        conexion.rollback()
+        return f"Error al cerrar día de ventas: {e}"
+    finally:
+        cursor.close()
 
 def agregar_productos(conexion):
     while True:
@@ -213,7 +243,7 @@ def ver_dia_de_ventas(conexion):
             return
 
         id_dia_de_ventas, fecha_abierto = resultado
-        print(f"Informe del día de ventas abierto desde {fecha_abierto.strftime('%d/%m/%Y %H:%M:%S')}")
+        print(f"\nInforme del Día de Ventas (ID: {id_dia_de_ventas}, Fecha: {fecha_abierto}):")
 
         # Obtener la cantidad de ventas con boleta y el monto total de esas ventas
         query_boletas = """
@@ -225,37 +255,62 @@ def ver_dia_de_ventas(conexion):
         cantidad_boletas, total_boletas = cursor.fetchone()
 
         print(f"Cantidad de ventas con boleta: {cantidad_boletas}")
-        print(f"Cantidad de dinero por ventas con boleta: {total_boletas}")
+        print(f"Monto total de ventas con boleta: {total_boletas if total_boletas else 0}")
 
-        # Obtener el número de facturas generadas y el detalle de cada una
+        # Obtener la cantidad de ventas con factura y el monto total de esas ventas
         query_facturas = """
-        SELECT id, precio_total
+        SELECT COUNT(*), SUM(precio_total)
         FROM ventas
         WHERE id_dia_de_ventas = %s AND tipo_documento = 'factura'
         """
         cursor.execute(query_facturas, (id_dia_de_ventas,))
-        facturas = cursor.fetchall()
+        cantidad_facturas, total_facturas = cursor.fetchone()
 
-        print(f"Número de facturas generadas: {len(facturas)}")
-        for factura in facturas:
-            id_factura, precio_total = factura
-            iva = precio_total * 0.19
-            neto = precio_total - iva
-            print(f"Factura {id_factura}: Neto: {neto}, IVA: {iva}, Total: {precio_total}")
+        print(f"Cantidad de ventas con factura: {cantidad_facturas}")
+        print(f"Monto total de ventas con factura: {total_facturas if total_facturas else 0}")
 
     except Exception as e:
         print(f"Error al generar el informe del día de ventas: {e}")
     finally:
         cursor.close()
 
-def bienvenido():
-    mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
-    ancho_total = len(mensaje) + 6  # 2 asteriscos + 2 espacios + 2 comillas
+def menu_vendedor(usuario_id, conexion):
+    while True:
+        print("\nMenú de Vendedor:")
+        print("1. Realizar venta")
+        print("2. Consultar producto por SKU")
+        print("0. Salir")
+        
+        opcion = input("Seleccione una opción: ")
+        
+        if opcion == '1':
+            generar_venta(usuario_id, conexion)
+        elif opcion == '2':
+            consultar_producto(conexion)
+        elif opcion == '0':
+            print("Saliendo del menú de Vendedor.")
+            return False  # Regresar a la pantalla de login
+        else:
+            print("Opción no válida. Intente nuevamente.")
 
-    print("*" * ancho_total)
-    print(f"* {mensaje.center(ancho_total - 4)} *")
-    print("*" * ancho_total)
-
-
-
-
+def consultar_producto(conexion):
+    try:
+        cursor = conexion.cursor()
+        sku_producto = input("Ingrese el SKU del producto: ")
+        
+        query = "SELECT nombre, precio, cantidad FROM productos WHERE sku = %s"
+        cursor.execute(query, (sku_producto,))
+        resultado = cursor.fetchone()
+        
+        if not resultado:
+            print("Producto no encontrado.")
+        else:
+            nombre, precio, cantidad = resultado
+            print(f"Producto: {nombre}")
+            print(f"Precio: {precio}")
+            print(f"Cantidad en stock: {cantidad}")
+    
+    except Exception as e:
+        print(f"Error al consultar producto: {e}")
+    finally:
+        cursor.close()
