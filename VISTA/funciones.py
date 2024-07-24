@@ -1,5 +1,7 @@
 from DB.conexion import DAO
 from datetime import datetime
+import re
+from itertools import cycle
 
 def bienvenido():
     mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
@@ -59,6 +61,7 @@ def submenu_jefe_ventas(conexion, id_jefe_de_ventas):
         print("3. Agregar producto")
         print("4. Ver día de ventas")
         print("5. Filtrar día de ventas por vendedor")
+        print("6. Ver días cerrados con vendedores")
         print("0. Salir")
         
         opcion = input("Seleccione una opción: ")
@@ -75,11 +78,14 @@ def submenu_jefe_ventas(conexion, id_jefe_de_ventas):
             ver_dia_de_ventas(conexion)
         elif opcion == '5':
             filtrar_dia_de_ventas_por_vendedor(conexion)
+        elif opcion == '6':
+            ver_dias_cerrados_con_vendedores(conexion)
         elif opcion == '0':
             print("Saliendo del menú de Jefe de Ventas.")
             return True
         else:
             print("Opción no válida. Intente nuevamente.")
+
 
 def abrir_dia_de_ventas(conexion, id_jefe_de_ventas):
     try:
@@ -237,6 +243,58 @@ def ver_dia_de_ventas(conexion):
         cursor.close()
 
 
+def ver_dias_cerrados_con_vendedores(conexion):
+    try:
+        cursor = conexion.cursor()
+        
+        # Consultar días de ventas cerrados con los nombres de los vendedores y el conteo de ventas
+        query = """
+        SELECT d.id AS dia_id, d.fecha_abierto, d.fecha_cerrado, d.estado, u.nombre_usuario, COUNT(v.id) AS cantidad_ventas
+        FROM dias_de_ventas d
+        JOIN ventas v ON d.id = v.id_dia_de_ventas
+        JOIN usuarios u ON v.id_usuario = u.id
+        WHERE d.estado = 'cerrado'
+        GROUP BY d.id, u.nombre_usuario
+        ORDER BY d.fecha_cerrado DESC
+        """
+        
+        cursor.execute(query)
+        resultados = cursor.fetchall()
+        
+        if resultados:
+            dias_cerrados = {}
+            for row in resultados:
+                dia_id, fecha_abierto, fecha_cerrado, estado, nombre_usuario, cantidad_ventas = row
+                if dia_id not in dias_cerrados:
+                    dias_cerrados[dia_id] = {
+                        'fecha_abierto': fecha_abierto,
+                        'fecha_cerrado': fecha_cerrado,
+                        'estado': estado,
+                        'vendedores': {}
+                    }
+                dias_cerrados[dia_id]['vendedores'][nombre_usuario] = cantidad_ventas
+            
+            # Mostrar los días cerrados con los vendedores
+            print("\nDías de ventas cerrados con vendedores:")
+            for dia_id, info in dias_cerrados.items():
+                print(f"ID Día de Ventas: {dia_id}")
+                print(f"Fecha Abierto: {info['fecha_abierto']}")
+                print(f"Fecha Cerrado: {info['fecha_cerrado']}")
+                print(f"Estado: {info['estado']}")
+                
+                vendedores_info = [f"{nombre} ({cantidad})" for nombre, cantidad in info['vendedores'].items()]
+                print(f"Vendedores: {', '.join(vendedores_info)}")
+                print("-" * 40)
+        else:
+            print("No hay días de ventas cerrados.")
+    
+    except Exception as e:
+        print(f"Error al consultar días cerrados con vendedores: {e}")
+    finally:
+        cursor.close()
+
+
+
 def menu_vendedor(usuario_id, conexion):
     while True:
         print("\nMenú de Vendedor:")
@@ -255,7 +313,6 @@ def menu_vendedor(usuario_id, conexion):
             return True  # Regresar a la pantalla de login
         else:
             print("Opción no válida. Intente nuevamente.")
-
 
 def realizar_venta(usuario_id, conexion):
     try:
@@ -279,16 +336,18 @@ def realizar_venta(usuario_id, conexion):
             cantidad = int(input("Ingrese la cantidad: ").strip())
             
             # Buscar el producto por SKU
-            query = "SELECT id, precio FROM productos WHERE sku = %s"
+            query = "SELECT id, precio, cantidad FROM productos WHERE sku = %s"
             cursor.execute(query, (codigo_producto,))
             producto = cursor.fetchone()
             
             if producto:
-                producto_id, precio = producto
-                total_producto = precio * cantidad
-                total_venta += total_producto
-                
-                productos_vendidos.append((producto_id, cantidad, total_producto))
+                producto_id, precio, cantidad_disponible = producto
+                if cantidad <= cantidad_disponible:
+                    total_producto = precio * cantidad
+                    total_venta += total_producto
+                    productos_vendidos.append((producto_id, cantidad, total_producto))
+                else:
+                    print("No hay suficiente cantidad disponible para el producto.")
             else:
                 print("Producto no encontrado. Verifique el código SKU ingresado.")
             
@@ -326,6 +385,10 @@ def realizar_venta(usuario_id, conexion):
             for producto_id, cantidad, total_producto in productos_vendidos:
                 query = "INSERT INTO ventas_productos (id_venta, id_producto, cantidad) VALUES (%s, %s, %s)"
                 cursor.execute(query, (id_venta, producto_id, cantidad))
+                
+                # Actualizar la cantidad del producto en la base de datos
+                query = "UPDATE productos SET cantidad = cantidad - %s WHERE id = %s"
+                cursor.execute(query, (cantidad, producto_id))
             
             conexion.commit()
             print(f"Venta registrada exitosamente. ID de la venta: {id_venta}")
@@ -353,36 +416,43 @@ def generar_boleta(id_venta, conexion):
     try:
         cursor = conexion.cursor()
         
-        # Insertar boleta
+        # Insertar la boleta
         query = "INSERT INTO boletas (id_venta) VALUES (%s)"
         cursor.execute(query, (id_venta,))
         id_boleta = cursor.lastrowid
         
-        # Insertar detalles de la boleta
+        # Obtener detalles de la venta
         query = """
-        INSERT INTO detalles_boleta (id_boleta, id_producto, cantidad, total_pagar)
-        SELECT %s, id_producto, cantidad, cantidad * (SELECT precio FROM productos WHERE id = id_producto)
-        FROM ventas_productos
-        WHERE id_venta = %s
+        SELECT p.nombre, vp.cantidad, p.precio
+        FROM ventas_productos vp
+        JOIN productos p ON vp.id_producto = p.id
+        WHERE vp.id_venta = %s
         """
-        cursor.execute(query, (id_boleta, id_venta))
-        conexion.commit()
-        
-        # Mostrar detalle de la boleta
-        query = """
-        SELECT p.nombre, vb.cantidad, vb.total_pagar
-        FROM detalles_boleta vb
-        JOIN productos p ON vb.id_producto = p.id
-        WHERE vb.id_boleta = %s
-        """
-        cursor.execute(query, (id_boleta,))
+        cursor.execute(query, (id_venta,))
         detalles = cursor.fetchall()
         
-        print(f"Boleta generada exitosamente. ID de la boleta: {id_boleta}")
-        print("Detalles de la boleta:")
+        # Calcular totales
+        total_venta = 0
+        print("\nBoleta Generada")
+        print(f"ID Venta: {id_venta}")
+        print(f"ID Boleta: {id_boleta}")
+        print("\nDetalles de productos:")
+        print(f"{'Producto':<20} {'Cantidad':<10} {'Precio Unitario':<15} {'Total Producto':<15}")
+        
         for detalle in detalles:
-            nombre_producto, cantidad, total_pagar = detalle
-            print(f"Producto: {nombre_producto}, Cantidad: {cantidad}, Total a Pagar: {total_pagar}")
+            nombre_producto, cantidad, precio = detalle
+            total_producto = cantidad * precio
+            total_venta += total_producto
+            
+            # Mostrar detalles por consola
+            nombre_producto_corto = nombre_producto[:20]  # Limitar el nombre del producto a 20 caracteres
+            print(f"{nombre_producto_corto:<20} {cantidad:<10} {precio:<15.2f} {total_producto:<15.2f}")
+        
+        # Mostrar total
+        print("\nTotal a pagar: {:.2f}".format(total_venta))
+        
+        conexion.commit()
+        print("Boleta generada exitosamente.")
     
     except Exception as e:
         conexion.rollback()
@@ -391,37 +461,144 @@ def generar_boleta(id_venta, conexion):
         cursor.close()
 
 
+
+
+
+def digito_verificador(rut):
+    """
+    Calcula el dígito verificador para un RUT dado.
+    """
+    reversed_digits = map(int, reversed(str(rut)))
+    factors = cycle(range(2, 8))
+    s = sum(d * f for d, f in zip(reversed_digits, factors))
+    dv = (-s) % 11
+    return 'K' if dv == 10 else str(dv)
+
+def validar_rut(rut):
+    """
+    Valida un RUT en el formato tradicional chileno.
+    """
+    # Eliminar caracteres no numéricos y letras
+    rut = re.sub(r'[^0-9Kk]', '', rut)
+    
+    if len(rut) < 2:
+        return False
+
+    # Extraer el dígito verificador y el cuerpo del RUT
+    rut_cuerpo = rut[:-1]
+    digito_verificador_ingresado = rut[-1].upper()
+
+    if not rut_cuerpo.isdigit():
+        return False
+
+    # Calcular el dígito verificador
+    digito_calculado = digito_verificador(rut_cuerpo)
+    
+    # Verificar que el dígito verificador coincida con el calculado
+    return digito_verificador_ingresado == digito_calculado
+
+def ingresar_rut():
+    while True:
+        rut = input("Ingrese RUT del cliente (solo números y dígito verificador, sin puntos ni guiones): ").strip()
+        rut = rut.upper()  # Asegurarse de que el RUT ingresado esté en mayúscula
+        if validar_rut(rut):
+            return rut
+        else:
+            print("RUT inválido. Por favor, ingrese un RUT válido.")
+
+def formatear_rut(rut):
+    """
+    Formatea un RUT para incluir puntos y guiones.
+    """
+    rut = rut.upper()
+    rut = re.sub(r'[^0-9K]', '', rut)
+    rut_cuerpo = rut[:-1]
+    digito_verificador = rut[-1]
+    
+    # Formatear el RUT
+    rut_formateado = '{:,.0f}-{}'.format(float(rut_cuerpo), digito_verificador)
+    rut_formateado = rut_formateado.replace(',', '.').replace(' ', '')
+    
+    return rut_formateado
+
+
 def generar_factura(id_venta, conexion):
     try:
         cursor = conexion.cursor()
         
-        razon_social = input("Ingrese razón social del cliente: ")
-        rut = input("Ingrese RUT del cliente: ")
-        giro = input("Ingrese giro del cliente (opcional): ")
-        direccion = input("Ingrese dirección del cliente: ")
+        razon_social = input("Ingrese razón social del cliente: ").strip()
+        rut = ingresar_rut()  # Usa la función para ingresar el RUT validado
+        giro = input("Ingrese giro del cliente (opcional): ").strip()
+        direccion = input("Ingrese dirección del cliente: ").strip()
         
-        # Insertar factura
-        query = "INSERT INTO facturas (id_venta, razon_social, rut, giro, direccion) VALUES (%s, %s, %s, %s, %s)"
-        cursor.execute(query, (id_venta, razon_social, rut, giro, direccion))
+        # Formatear el RUT antes de insertarlo en la base de datos
+        rut_formateado = formatear_rut(rut)
+        
+        # Insertar la factura
+        query = """
+        INSERT INTO facturas (id_venta, razon_social, rut, giro, direccion)
+        VALUES (%s, %s, %s, %s, %s)
+        """
+        cursor.execute(query, (id_venta, razon_social, rut_formateado, giro, direccion))
         id_factura = cursor.lastrowid
         
-        # Insertar detalles de la factura
+        # Obtener detalles de la venta para calcular totales
         query = """
-        INSERT INTO detalles_factura (id_factura, id_producto, cantidad, total_neto, iva, total_final)
-        SELECT %s, id_producto, cantidad, cantidad * (SELECT precio FROM productos WHERE id = id_producto) AS total_neto,
-               cantidad * (SELECT precio FROM productos WHERE id = id_producto) * 0.19 AS iva,
-               cantidad * (SELECT precio FROM productos WHERE id = id_producto) * 1.19 AS total_final
-        FROM ventas_productos
-        WHERE id_venta = %s
+        SELECT p.id, p.nombre, vp.cantidad, p.precio
+        FROM ventas_productos vp
+        JOIN productos p ON vp.id_producto = p.id
+        WHERE vp.id_venta = %s
         """
-        cursor.execute(query, (id_factura, id_venta))
+        cursor.execute(query, (id_venta,))
+        detalles = cursor.fetchall()
+
+        total_compra = 0
+        total_iva = 0
+        total_final_compra = 0
+        
+        print("\nFactura Generada")
+        print(f"Razón social: {razon_social}")
+        print(f"RUT: {rut_formateado}")
+        print(f"Giro: {giro}")
+        print(f"Dirección: {direccion}")
+        print("\nDetalles de productos:")
+        print(f"{'Producto':<20} {'Cantidad':<10} {'Total Neto':<10} {'IVA':<10} {'Total Final':<10}")
+
+        for detalle in detalles:
+            id_producto, nombre_producto, cantidad, precio = detalle
+            total_neto = cantidad * precio
+            iva = total_neto * 0.19
+            total_final = total_neto + iva
+            
+            # Acumular los totales
+            total_compra += total_neto
+            total_iva += iva
+            total_final_compra += total_final
+
+            # Mostrar detalles por consola
+            nombre_producto_corto = nombre_producto[:20]  # Limitar el nombre del producto a 20 caracteres
+            print(f"{nombre_producto_corto:<20} {cantidad:<10} {total_neto:<10.2f} {iva:<10.2f} {total_final:<10.2f}")
+            
+            # Insertar detalles de la factura
+            query = """
+            INSERT INTO detalles_factura (id_factura, id_producto, cantidad, total_neto, iva, total_final)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """
+            cursor.execute(query, (id_factura, id_producto, cantidad, total_neto, iva, total_final))
+        
         conexion.commit()
-        print(f"Factura generada exitosamente. ID de la factura: {id_factura}")
+        print(f"\nTotal Neto: {total_compra:.2f}")
+        print(f"Total IVA (19%): {total_iva:.2f}")
+        print(f"Total Final (Total Neto + IVA): {total_final_compra:.2f}")
+        print("Factura generada exitosamente.")
+    
     except Exception as e:
         conexion.rollback()
         print(f"Error al generar la factura: {e}")
     finally:
         cursor.close()
+
+
 
 
 def consultar_producto(conexion):
