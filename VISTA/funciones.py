@@ -2,9 +2,9 @@ from DB.conexion import DAO
 from datetime import datetime
 
 def bienvenido():
-    # Definir el mensaje
+    
     mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
-    ancho_total = len(mensaje) + 6  # 2 asteriscos + 2 espacios + 2 comillas
+    ancho_total = len(mensaje) + 6 
 
     print("*" * ancho_total) 
     print(f"* {mensaje.center(ancho_total - 4)} *")
@@ -59,6 +59,7 @@ def submenu_jefe_ventas(conexion, id_jefe_de_ventas):
         print("2. Cerrar día de ventas")
         print("3. Agregar producto")
         print("4. Ver día de ventas")
+        print("5. Filtrar día de ventas por vendedor")
         print("0. Salir")
         
         opcion = input("Seleccione una opción: ")
@@ -73,11 +74,16 @@ def submenu_jefe_ventas(conexion, id_jefe_de_ventas):
             agregar_productos(conexion)
         elif opcion == '4':
             ver_dia_de_ventas(conexion)
+        elif opcion == '5':
+            filtrar_dia_de_ventas_por_vendedor(conexion)
         elif opcion == '0':
             print("Saliendo del menú de Jefe de Ventas.")
             return True
         else:
             print("Opción no válida. Intente nuevamente.")
+
+
+
 
 def abrir_dia_de_ventas(conexion, id_jefe_de_ventas):
     try:
@@ -130,6 +136,41 @@ def cerrar_dia_de_ventas(conexion, id_jefe_de_ventas):
         return f"Error al cerrar día de ventas: {e}"
     finally:
         cursor.close()
+
+def filtrar_dia_de_ventas_por_vendedor(conexion):
+    try:
+        cursor = conexion.cursor()
+        
+        # Solicita nombre de usuario
+        nombre_usuario = input("Ingrese tu nombre de usuario: ")
+        
+        # Realiza consulta
+        query = """
+        SELECT DISTINCT d.id, d.fecha_abierto, d.fecha_cerrado, d.estado
+        FROM dias_de_ventas d
+        JOIN ventas v ON d.id = v.id_dia_de_ventas
+        JOIN usuarios u ON v.id_usuario = u.id
+        WHERE u.nombre_usuario = %s;
+        """
+        cursor.execute(query, (nombre_usuario,))
+        dias_de_ventas = cursor.fetchall()
+        
+        print("Consulta ejecutada")  # Mensaje de depuración
+        
+        if not dias_de_ventas:
+            print(f"No se encontraron días de ventas para el vendedor con nombre de usuario '{nombre_usuario}'.")
+        else:
+            print("\nDías de ventas del vendedor:")
+            for dia in dias_de_ventas:
+                id_dia, fecha_abierto, fecha_cerrado, estado = dia
+                print(f"ID: {id_dia}, Fecha Abierto: {fecha_abierto}, Fecha Cerrado: {fecha_cerrado}, Estado: {estado}")
+    
+    except Exception as e:
+        print(f"Error al filtrar días de ventas: {e}")
+    finally:
+        cursor.close()
+
+
 
 def agregar_productos(conexion):
     while True:
@@ -314,3 +355,4 @@ def consultar_producto(conexion):
         print(f"Error al consultar producto: {e}")
     finally:
         cursor.close()
+

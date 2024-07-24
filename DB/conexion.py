@@ -7,10 +7,10 @@ class DAO:
         self.conexion = None
         try:
             self.conexion = mysql.connector.connect(
-                host='dhdatabase.c9mc42yoi1fs.us-east-2.rds.amazonaws.com',
-                port=3306,
-                user='admin1',
-                password='Digital2024',
+                host='localhost',
+                port=33063,
+                user='root',
+                password='',
                 database='db_monitos'
             )
             print("Conexión exitosa a la base de datos.")
@@ -51,7 +51,7 @@ class DAO:
             
             id_dia_de_ventas = resultado[0]
             
-            # Actualizar el estado del día de ventas a 'cerrado', la fecha de cierre y el id del jefe de ventas
+            # Actualiza el estado del día de ventas a 'cerrado', la fecha de cierre y el id del jefe de ventas
             fecha_cerrado = datetime.now()
             query_update = """
             UPDATE dias_de_ventas SET estado = 'cerrado', fecha_cerrado = %s, id_jefe_de_ventas = %s WHERE id = %s
