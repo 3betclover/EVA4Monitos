@@ -2,6 +2,9 @@ from DB.conexion import DAO
 from datetime import datetime
 import re
 from itertools import cycle
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
 
 def bienvenido():
     mensaje = "Bienvenido al sistema de ventas \"Los monitos de la nona\""
@@ -200,43 +203,59 @@ def filtrar_dia_de_ventas_por_vendedor(conexion):
 def ver_dia_de_ventas(conexion):
     try:
         cursor = conexion.cursor()
+        
+        # Solicitar al usuario que ingrese la fecha deseada
+        dia = input("Ingrese el día (DD): ")
+        mes = input("Ingrese el mes (MM): ")
+        anio = input("Ingrese el año (YYYY): ")
+        
+        # Formatear la fecha
+        fecha_deseada = f"{anio}-{mes}-{dia}"
+        
+        # Obtener todos los IDs de días de ventas correspondientes a la fecha ingresada
+        query_id_dias = """
+        SELECT id, fecha_abierto, fecha_cerrado
+        FROM dias_de_ventas
+        WHERE DATE(fecha_abierto) = %s OR DATE(fecha_cerrado) = %s
+        """
+        cursor.execute(query_id_dias, (fecha_deseada, fecha_deseada))
+        resultados = cursor.fetchall()
 
-        # Obtener el ID del día de ventas abierto
-        query = "SELECT id, fecha_abierto FROM dias_de_ventas WHERE estado = 'abierto' ORDER BY fecha_abierto DESC LIMIT 1"
-        cursor.execute(query)
-        resultado = cursor.fetchone()
-
-        if not resultado:
-            print("No hay un día de ventas abierto para generar un informe.")
+        if not resultados:
+            print("No se encontró un día de ventas para la fecha ingresada.")
             return
+        
+        for resultado in resultados:
+            id_dia_de_ventas, fecha_abierto, fecha_cerrado = resultado
+            print(f"\nInforme del Día de Ventas (ID: {id_dia_de_ventas}, Fecha Abierto: {fecha_abierto}, Fecha Cerrado: {fecha_cerrado}):")
 
-        id_dia_de_ventas, fecha_abierto = resultado
-        print(f"\nInforme del Día de Ventas (ID: {id_dia_de_ventas}, Fecha: {fecha_abierto}):")
+            # Obtener la cantidad de ventas con boleta y el monto total de esas ventas
+            query_boletas = """
+            SELECT COUNT(*), SUM(precio_total)
+            FROM ventas
+            WHERE id_dia_de_ventas = %s AND tipo_documento = 'boleta'
+            """
+            cursor.execute(query_boletas, (id_dia_de_ventas,))
+            cantidad_boletas, total_boletas = cursor.fetchone()
 
-        # Obtener la cantidad de ventas con boleta y el monto total de esas ventas
-        query_boletas = """
-        SELECT COUNT(*), SUM(precio_total)
-        FROM ventas
-        WHERE id_dia_de_ventas = %s AND tipo_documento = 'boleta'
-        """
-        cursor.execute(query_boletas, (id_dia_de_ventas,))
-        cantidad_boletas, total_boletas = cursor.fetchone()
+            print(f"Cantidad de ventas con boleta: {cantidad_boletas}")
+            print(f"Monto total de ventas con boleta: {total_boletas if total_boletas else 0}")
 
-        print(f"Cantidad de ventas con boleta: {cantidad_boletas}")
-        print(f"Monto total de ventas con boleta: {total_boletas if total_boletas else 0}")
+            # Obtener la cantidad de ventas con factura y el monto total de esas ventas
+            query_facturas = """
+            SELECT COUNT(*), SUM(precio_total)
+            FROM ventas
+            WHERE id_dia_de_ventas = %s AND tipo_documento = 'factura'
+            """
+            cursor.execute(query_facturas, (id_dia_de_ventas,))
+            cantidad_facturas, total_facturas = cursor.fetchone()
 
-        # Obtener la cantidad de ventas con factura y el monto total de esas ventas
-        query_facturas = """
-        SELECT COUNT(*), SUM(precio_total)
-        FROM ventas
-        WHERE id_dia_de_ventas = %s AND tipo_documento = 'factura'
-        """
-        cursor.execute(query_facturas, (id_dia_de_ventas,))
-        cantidad_facturas, total_facturas = cursor.fetchone()
+            print(f"Cantidad de ventas con factura: {cantidad_facturas}")
+            print(f"Monto total de ventas con factura: {total_facturas if total_facturas else 0}")
 
-        print(f"Cantidad de ventas con factura: {cantidad_facturas}")
-        print(f"Monto total de ventas con factura: {total_facturas if total_facturas else 0}")
-
+            # Leer los resultados pendientes del cursor
+            cursor.fetchall()
+    
     except Exception as e:
         print(f"Error al generar el informe del día de ventas: {e}")
     finally:
@@ -433,26 +452,31 @@ def generar_boleta(id_venta, conexion):
         
         # Calcular totales
         total_venta = 0
-        print("\nBoleta Generada")
-        print(f"ID Venta: {id_venta}")
-        print(f"ID Boleta: {id_boleta}")
-        print("\nDetalles de productos:")
-        print(f"{'Producto':<20} {'Cantidad':<10} {'Precio Unitario':<15} {'Total Producto':<15}")
+        nombre_archivo = f"boleta_{id_boleta}.pdf"
+        c = canvas.Canvas(nombre_archivo, pagesize=letter)
+        c.drawString(1 * inch, 10 * inch, f"Boleta de Venta ID: {id_venta}")
+        c.drawString(1 * inch, 9.5 * inch, f"ID Boleta: {id_boleta}")
+        c.drawString(1 * inch, 9 * inch, "Detalles de productos:")
+        c.drawString(1 * inch, 8.5 * inch, f"{'Producto':<20} {'Cantidad':<10} {'Precio Unitario':<15} {'Total Producto':<15}")
+        
+        y_position = 8 * inch
         
         for detalle in detalles:
             nombre_producto, cantidad, precio = detalle
             total_producto = cantidad * precio
             total_venta += total_producto
             
-            # Mostrar detalles por consola
-            nombre_producto_corto = nombre_producto[:20]  # Limitar el nombre del producto a 20 caracteres
-            print(f"{nombre_producto_corto:<20} {cantidad:<10} {precio:<15.2f} {total_producto:<15.2f}")
+            # Mostrar detalles en el PDF
+            nombre_producto_corto = nombre_producto[:20]
+            c.drawString(1 * inch, y_position, f"{nombre_producto_corto:<20} {cantidad:<10} {precio:<15.2f} {total_producto:<15.2f}")
+            y_position -= 0.5 * inch
         
         # Mostrar total
-        print("\nTotal a pagar: {:.2f}".format(total_venta))
+        c.drawString(1 * inch, y_position, f"Total a pagar: {total_venta:.2f}")
+        c.save()
         
         conexion.commit()
-        print("Boleta generada exitosamente.")
+        print(f"Boleta generada exitosamente. Archivo: {nombre_archivo}")
     
     except Exception as e:
         conexion.rollback()
@@ -556,13 +580,17 @@ def generar_factura(id_venta, conexion):
         total_iva = 0
         total_final_compra = 0
         
-        print("\nFactura Generada")
-        print(f"Razón social: {razon_social}")
-        print(f"RUT: {rut_formateado}")
-        print(f"Giro: {giro}")
-        print(f"Dirección: {direccion}")
-        print("\nDetalles de productos:")
-        print(f"{'Producto':<20} {'Cantidad':<10} {'Total Neto':<10} {'IVA':<10} {'Total Final':<10}")
+        nombre_archivo = f"factura_{id_factura}.pdf"
+        c = canvas.Canvas(nombre_archivo, pagesize=letter)
+        c.drawString(1 * inch, 10 * inch, f"Factura de Venta ID: {id_venta}")
+        c.drawString(1 * inch, 9.5 * inch, f"Razón social: {razon_social}")
+        c.drawString(1 * inch, 9 * inch, f"RUT: {rut_formateado}")
+        c.drawString(1 * inch, 8.5 * inch, f"Giro: {giro}")
+        c.drawString(1 * inch, 8 * inch, f"Dirección: {direccion}")
+        c.drawString(1 * inch, 7.5 * inch, "Detalles de productos:")
+        c.drawString(1 * inch, 7 * inch, f"{'Producto':<20} {'Cantidad':<10} {'Total Neto':<10} {'IVA':<10} {'Total Final':<10}")
+
+        y_position = 6.5 * inch
 
         for detalle in detalles:
             id_producto, nombre_producto, cantidad, precio = detalle
@@ -575,9 +603,10 @@ def generar_factura(id_venta, conexion):
             total_iva += iva
             total_final_compra += total_final
 
-            # Mostrar detalles por consola
-            nombre_producto_corto = nombre_producto[:20]  # Limitar el nombre del producto a 20 caracteres
-            print(f"{nombre_producto_corto:<20} {cantidad:<10} {total_neto:<10.2f} {iva:<10.2f} {total_final:<10.2f}")
+            # Mostrar detalles en el PDF
+            nombre_producto_corto = nombre_producto[:20]
+            c.drawString(1 * inch, y_position, f"{nombre_producto_corto:<20} {cantidad:<10} {total_neto:<10.2f} {iva:<10.2f} {total_final:<10.2f}")
+            y_position -= 0.5 * inch
             
             # Insertar detalles de la factura
             query = """
@@ -586,17 +615,21 @@ def generar_factura(id_venta, conexion):
             """
             cursor.execute(query, (id_factura, id_producto, cantidad, total_neto, iva, total_final))
         
+        c.drawString(1 * inch, y_position, f"Total Neto: {total_compra:.2f}")
+        c.drawString(1 * inch, y_position - 0.5 * inch, f"Total IVA (19%): {total_iva:.2f}")
+        c.drawString(1 * inch, y_position - 1 * inch, f"Total Final (Total Neto + IVA): {total_final_compra:.2f}")
+        
+        c.save()
+        
         conexion.commit()
-        print(f"\nTotal Neto: {total_compra:.2f}")
-        print(f"Total IVA (19%): {total_iva:.2f}")
-        print(f"Total Final (Total Neto + IVA): {total_final_compra:.2f}")
-        print("Factura generada exitosamente.")
+        print(f"Factura generada exitosamente. Archivo: {nombre_archivo}")
     
     except Exception as e:
         conexion.rollback()
         print(f"Error al generar la factura: {e}")
     finally:
         cursor.close()
+
 
 
 
@@ -640,3 +673,82 @@ def obtener_id_dia_de_ventas(conexion):
         return None
     finally:
         cursor.close()
+
+
+
+
+
+def generar_pdf_boleta(id_venta, productos, total):
+    nombre_archivo = f"Boleta_ID_{id_venta}.pdf"
+    ruta_archivo = os.path.join(os.getcwd(), nombre_archivo)
+
+    c = canvas.Canvas(ruta_archivo, pagesize=letter)
+    width, height = letter
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(72, height - 72, "Boleta")
+
+    c.setFont("Helvetica", 12)
+    y = height - 100
+    c.drawString(72, y, f"ID de Venta: {id_venta}")
+    y -= 20
+    c.drawString(72, y, f"Fecha: {fecha_actual()}")
+
+    c.drawString(72, y - 20, "Productos:")
+    y -= 40
+
+    for producto in productos:
+        c.drawString(72, y, f"Producto: {producto['nombre']}, Cantidad: {producto['cantidad']}, Precio Unitario: {producto['precio_unitario']}, Total: {producto['total']}")
+        y -= 20
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(72, y - 20, f"Total a Pagar: {total}")
+
+    c.showPage()
+    c.save()
+
+    print(f"PDF de Boleta generado exitosamente: {ruta_archivo}")
+
+def generar_pdf_factura(id_venta, productos, total, numero_factura, neto, iva):
+    nombre_archivo = f"Factura_ID_{id_venta}.pdf"
+    ruta_archivo = os.path.join(os.getcwd(), nombre_archivo)
+
+    c = canvas.Canvas(ruta_archivo, pagesize=letter)
+    width, height = letter
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(72, height - 72, "Factura")
+
+    c.setFont("Helvetica", 12)
+    y = height - 100
+    c.drawString(72, y, f"ID de Venta: {id_venta}")
+    y -= 20
+    c.drawString(72, y, f"Fecha: {fecha_actual()}")
+    y -= 20
+    c.drawString(72, y, f"Número de Factura: {numero_factura}")
+
+    c.drawString(72, y - 20, "Productos:")
+    y -= 40
+
+    for producto in productos:
+        c.drawString(72, y, f"Producto: {producto['nombre']}, Cantidad: {producto['cantidad']}, Precio Unitario: {producto['precio_unitario']}, Total: {producto['total']}")
+        y -= 20
+
+    c.setFont("Helvetica-Bold", 12)
+    c.drawString(72, y - 20, f"Subtotal: {neto}")
+    y -= 20
+    c.drawString(72, y - 20, f"IVA: {iva}")
+    y -= 20
+    c.drawString(72, y - 20, f"Total a Pagar: {total}")
+
+    c.showPage()
+    c.save()
+
+    print(f"PDF de Factura generado exitosamente: {ruta_archivo}")
+
+def fecha_actual():
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+
